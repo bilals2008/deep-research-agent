@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { researchStream } from "@/lib/api";
 import { FileViewerModal } from "@/components/shared/FileViewerModal";
 import type { ResearchState, Todo, Source, ResearchFile } from "@/types/research";
+import type { Depth } from "@/types/research";
 import {
   Bot,
   SendHorizontal,
@@ -33,10 +34,21 @@ import {
   ChevronDown,
   ChevronRight,
   Search,
+  FileDown,
+  BookOpen,
+  Zap,
+  Scale,
+  Layers,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+
+const DEPTH_CONFIG: Record<Depth, { label: string; icon: typeof Zap; desc: string; maxSources: number }> = {
+  quick: { label: "Quick", icon: Zap, desc: "3 sources", maxSources: 3 },
+  balanced: { label: "Balanced", icon: Scale, desc: "5 sources", maxSources: 5 },
+  thorough: { label: "Thorough", icon: Layers, desc: "8 sources", maxSources: 8 },
+};
 
 const INITIAL_STATE: ResearchState = {
   todos: [], sources: [], files: [], status: "idle",
@@ -87,16 +99,56 @@ const SUGGESTIONS = [
   "How does climate change affect global supply chains?",
 ];
 
-function downloadFile(file: ResearchFile) {
-  const blob = new Blob([file.content], { type: "text/markdown" });
+function downloadFile(file: ResearchFile, ext: string = "md") {
+  const mimeMap: Record<string, string> = {
+    md: "text/markdown",
+    pdf: "application/pdf",
+    docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  };
+  const mime = mimeMap[ext] || "text/markdown";
+  const blob = new Blob([file.content], { type: mime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = file.path.split("/").pop() || "file.txt";
+  const name = (file.path.split("/").pop() || "report").replace(/\.\w+$/, "");
+  a.download = `${name}.${ext}`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+async function exportPDF(file: ResearchFile) {
+  const { default: html2pdf } = await import("html2pdf.js");
+  const el = document.createElement("div");
+  el.style.padding = "40px";
+  el.style.fontFamily = "system-ui, sans-serif";
+  el.style.fontSize = "14px";
+  el.style.lineHeight = "1.6";
+  el.style.maxWidth = "800px";
+  el.style.margin = "0 auto";
+  el.style.color = "#111";
+  el.innerHTML = file.content
+    .replace(/^### (.+)$/gm, "<h3>$1</h3>")
+    .replace(/^## (.+)$/gm, "<h2>$1</h2>")
+    .replace(/^# (.+)$/gm, "<h1>$1</h1>")
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/\n\n/g, "</p><p>")
+    .replace(/^- (.+)$/gm, "<li>$1</li>");
+  document.body.appendChild(el);
+  await html2pdf().set({ margin: [0.75, 0.75, 0.75, 0.75], filename: `${file.path.split("/").pop() || "report"}.pdf`, html2canvas: { scale: 2 } }).from(el).save();
+  document.body.removeChild(el);
+}
+
+async function exportDOCX(file: ResearchFile) {
+  const { saveAs } = await import("file-saver");
+  const name = (file.path.split("/").pop() || "report").replace(/\.\w+$/, "");
+  const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>${name}</title>
+<style>body{font-family:system-ui,sans-serif;font-size:12pt;line-height:1.6;max-width:800px;margin:40px auto;color:#111}h1{font-size:24pt}h2{font-size:18pt}h3{font-size:14pt}code{background:#f4f4f5;padding:2px 6px;border-radius:3px}pre{background:#f4f4f5;padding:12px;border-radius:6px;overflow-x:auto}</style></head>
+<body>${file.content.replace(/\n/g, "<br>")}</body></html>`;
+  const blob = new Blob([html], { type: "application/msword" });
+  saveAs(blob, `${name}.doc`);
 }
 
 export default function Home() {
@@ -106,11 +158,12 @@ export default function Home() {
 
   const [state, setState] = useState<ResearchState>(INITIAL_STATE);
   const [input, setInput] = useState("");
-  const [messages, setMessages] = useState<{ role: string; content: string; isReport?: boolean }[]>([]);
+  const [messages, setMessages] = useState<{ role: string; content: string; isReport?: boolean; file?: ResearchFile }[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [selectedFile, setSelectedFile] = useState<ResearchFile | null>(null);
+  const [depth, setDepth] = useState<Depth>("balanced");
   const sessionId = useRef(genId());
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -172,8 +225,9 @@ export default function Home() {
           case "report": {
             const files = data.files || [];
             setState((prev) => ({ ...prev, files: [...prev.files, ...files], status: "done" }));
-            const reportContent = files.length > 0 ? files.map((f) => f.content).join("\n\n---\n\n") : "Research complete!";
-            setMessages((prev) => [...prev, { role: "assistant", content: reportContent, isReport: true }]);
+            const file = files[0];
+            const preview = file ? file.content.split("\n").slice(0, 15).join("\n").slice(0, 500) : "Research complete!";
+            setMessages((prev) => [...prev, { role: "assistant", content: preview, isReport: true, file }]);
             break;
           }
           case "complete":
@@ -187,10 +241,11 @@ export default function Home() {
         setStreaming(false);
       },
       () => setStreaming(false),
+      depth,
     );
 
     abortRef.current = controller;
-  }, [input, streaming, state.status]);
+  }, [input, streaming, state.status, depth]);
 
   function handleCancel() {
     abortRef.current?.abort();
@@ -219,8 +274,9 @@ export default function Home() {
           case "report": {
             const files = data.files || [];
             setState((prev) => ({ ...prev, files: [...prev.files, ...files], status: "done" }));
-            const reportContent = files.length > 0 ? files.map((f) => f.content).join("\n\n---\n\n") : "Research complete!";
-            setMessages((prev) => [...prev, { role: "assistant", content: reportContent, isReport: true }]);
+            const file = files[0];
+            const preview = file ? file.content.split("\n").slice(0, 15).join("\n").slice(0, 500) : "Research complete!";
+            setMessages((prev) => [...prev, { role: "assistant", content: preview, isReport: true, file }]);
             break;
           }
           case "message": {
@@ -241,10 +297,11 @@ export default function Home() {
         setStreaming(false);
       },
       () => setStreaming(false),
+      depth,
     );
 
     abortRef.current = controller;
-  }, []);
+  }, [depth]);
 
   const hasMessages = messages.length > 0;
   const hasSidebarContent = state.todos.length > 0 || state.sources.length > 0 || state.files.length > 0;
@@ -341,6 +398,20 @@ export default function Home() {
                     )}
                     {msg.isReport ? (
                       <div className="max-w-[85%] bg-muted/30 border border-border/60 rounded-2xl px-5 py-4 shadow-sm">
+                        <div className="flex items-center gap-2 mb-2 pb-2 border-b border-border/40">
+                          <div className="size-6 rounded-md bg-primary/10 flex items-center justify-center">
+                            <FileText className="size-3 text-primary" />
+                          </div>
+                          <span className="text-xs font-semibold text-foreground">Research Report</span>
+                          {msg.file && (
+                            <button
+                              onClick={() => setSelectedFile(msg.file!)}
+                              className="ml-auto text-[11px] font-medium text-primary hover:text-primary/80 transition-colors"
+                            >
+                              View full report &rarr;
+                            </button>
+                          )}
+                        </div>
                         <div className="prose prose-sm prose-headings:font-semibold prose-headings:text-foreground prose-p:text-foreground/90 prose-li:text-foreground/90 prose-strong:text-foreground prose-a:text-primary hover:prose-a:text-primary/80 prose-code:text-primary/80 prose-code:bg-primary/5 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-xs prose-pre:bg-muted prose-pre:border prose-pre:border-border prose-blockquote:border-l-primary/30 prose-blockquote:text-foreground/70 max-w-none">
                           <ReactMarkdown>{msg.content}</ReactMarkdown>
                         </div>
@@ -423,6 +494,30 @@ export default function Home() {
         {/* Input */}
         <div className="shrink-0 border-t border-border bg-background/80 backdrop-blur-md">
           <div className="max-w-3xl mx-auto px-4 py-3">
+            {/* Depth Selector */}
+            {!streaming && (
+              <div className="flex items-center gap-1 mb-2 px-0.5">
+                <span className="text-[11px] text-muted-foreground/50 mr-1 font-medium uppercase tracking-wider">Depth</span>
+                {(Object.entries(DEPTH_CONFIG) as [Depth, typeof DEPTH_CONFIG[Depth]][]).map(([key, cfg]) => {
+                  const Icon = cfg.icon;
+                  return (
+                    <button
+                      key={key}
+                      onClick={() => setDepth(key)}
+                      className={cn(
+                        "flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all",
+                        depth === key
+                          ? "bg-primary/10 text-primary ring-1 ring-primary/20"
+                          : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/50"
+                      )}
+                    >
+                      <Icon className="size-3" />
+                      {cfg.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
             <form onSubmit={handleSubmit}>
               <div className="flex items-end gap-2">
                 <div className="flex-1 relative">
@@ -581,13 +676,22 @@ export default function Home() {
                                 </p>
                               </div>
                             </div>
-                            <button
-                              onClick={(e) => { e.stopPropagation(); downloadFile(file); }}
-                              className="size-7 rounded-md flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-muted transition-all shrink-0"
-                              title="Download"
-                            >
-                              <Download className="size-3.5 text-muted-foreground" />
-                            </button>
+                            <div className="flex items-center gap-0.5">
+                              <button
+                                onClick={(e) => { e.stopPropagation(); exportPDF(file); }}
+                                className="size-7 rounded-md flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-muted transition-all shrink-0"
+                                title="Export PDF"
+                              >
+                                <FileDown className="size-3.5 text-muted-foreground" />
+                              </button>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); exportDOCX(file); }}
+                                className="size-7 rounded-md flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-muted transition-all shrink-0"
+                                title="Export DOCX"
+                              >
+                                <Download className="size-3.5 text-muted-foreground" />
+                              </button>
+                            </div>
                           </div>
                           <p className="text-xs text-muted-foreground/70 line-clamp-2 leading-relaxed">
                             {file.content.split("\n").slice(0, 3).join(" ").slice(0, 150)}...
@@ -600,6 +704,32 @@ export default function Home() {
                       </div>
                     );
                   })}
+                </div>
+              </div>
+            )}
+
+            {/* Bibliography */}
+            {state.sources.length > 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                  <BookOpen className="size-3.5" />
+                  Bibliography
+                  <Badge variant="secondary" className="text-[10px] h-4 px-1 ml-auto">{state.sources.length}</Badge>
+                </div>
+                <div className="space-y-1">
+                  {state.sources.map((source, i) => (
+                    <div key={i} className="flex items-start gap-2.5 rounded-lg px-2.5 py-2">
+                      <span className="text-[11px] font-mono text-muted-foreground/40 w-4 shrink-0 mt-0.5">{i + 1}.</span>
+                      <div className="min-w-0">
+                        <a href={source.url} target="_blank" rel="noopener noreferrer"
+                          className="text-xs font-medium hover:text-primary transition-colors truncate block"
+                        >
+                          {source.title || source.url}
+                        </a>
+                        <span className="text-[11px] text-muted-foreground/50 truncate block">{source.url}</span>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             )}

@@ -7,7 +7,7 @@ from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 
 from agent.state import ResearchState, Todo, Source, ResearchFile
-from agent.tools import research
+from agent.tools import deep_research, calculate, scrape_url
 from agent.prompts import (
     CLASSIFIER_PROMPT,
     CHAT_RESPONSE_PROMPT,
@@ -112,6 +112,8 @@ def plan_research(state: ResearchState) -> dict:
     }
 
 
+DEPTH_MAP = {"quick": 3, "balanced": 5, "thorough": 8}
+
 def execute_research(state: ResearchState) -> dict:
     plan = list(state["plan"])
     step_idx = state["current_step"]
@@ -122,7 +124,14 @@ def execute_research(state: ResearchState) -> dict:
     plan[step_idx]["status"] = "in_progress"
     query = plan[step_idx]["content"]
 
-    result = research(query)
+    depth = state.get("depth", "balanced")
+    max_results = DEPTH_MAP.get(depth, 5)
+
+    result = deep_research(query, max_results=max_results)
+
+    if not result.get("sources"):
+        scraped = scrape_url(query)
+        result["sources"].extend(scraped.get("sources", []))
 
     sources = list(state["sources"])
     for s in result.get("sources", []):
@@ -141,6 +150,7 @@ def execute_research(state: ResearchState) -> dict:
 def synthesize_findings(state: ResearchState) -> dict:
     llm = get_llm()
 
+    source_count = len(state["sources"])
     sources_text = "\n\n".join(
         f"- {s['title']}: {s['content'][:500]}" for s in state["sources"]
     )
@@ -152,13 +162,22 @@ def synthesize_findings(state: ResearchState) -> dict:
         {"role": "user", "content": f"Question: {query}\n\nResearch Findings:\n{sources_text}"},
     ])
 
+    bibliography = "\n\n---\n\n## Bibliography\n\n"
+    for i, s in enumerate(state["sources"], 1):
+        title = s["title"] or "Untitled"
+        url = s["url"]
+        bibliography += f"{i}. [{title}]({url})\n"
+
+    report_content = response.content + bibliography
+
     file = ResearchFile(
         path="/reports/final_report.md",
-        content=response.content,
+        content=report_content,
     )
 
     return {
         "files": [file],
+        "sources": list(state["sources"]),
         "status": "done",
         "pending_query": "",
         "messages": state["messages"] + [

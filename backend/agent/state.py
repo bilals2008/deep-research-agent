@@ -29,3 +29,4 @@ class ResearchState(TypedDict):
     intent: str  # chat | research | confirmation
     chat_message: str
     pending_query: str
+    depth: str  # quick | balanced | thorough

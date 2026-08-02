@@ -6,6 +6,7 @@ export async function researchStream(
   onEvent: (event: string, data: unknown) => void,
   onError: (err: Error) => void,
   onComplete: () => void,
+  depth: string = "balanced",
 ): Promise<AbortController> {
   const controller = new AbortController();
 
@@ -13,7 +14,7 @@ export async function researchStream(
     const res = await fetch(`${API_BASE}/api/research`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query, session_id: sessionId }),
+      body: JSON.stringify({ query, session_id: sessionId, depth }),
       signal: controller.signal,
     });
 

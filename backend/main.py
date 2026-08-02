@@ -37,9 +37,10 @@ def health():
 class ResearchRequest(BaseModel):
     query: str
     session_id: str = "default"
+    depth: str = "balanced"
 
 
-def initial_state(query: str) -> ResearchState:
+def initial_state(query: str, depth: str = "balanced") -> ResearchState:
     return {
         "messages": [],
         "query": query,
@@ -51,6 +52,7 @@ def initial_state(query: str) -> ResearchState:
         "intent": "",
         "chat_message": "",
         "pending_query": "",
+        "depth": depth,
     }
 
 
@@ -60,7 +62,7 @@ async def research_endpoint(req: ResearchRequest):
     pending = sessions.get(sid, "")
 
     # Build state with pending query from session
-    state = initial_state(req.query)
+    state = initial_state(req.query, req.depth)
     state["pending_query"] = pending
 
     thread_id = f"session_{sid}"

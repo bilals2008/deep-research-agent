@@ -15,9 +15,12 @@ export interface ResearchFile {
   content: string
 }
 
+export type Depth = "quick" | "balanced" | "thorough"
+
 export interface ResearchState {
   todos: Todo[]
   sources: Source[]
   files: ResearchFile[]
   status: "idle" | "planning" | "researching" | "synthesizing" | "done" | "error" | "awaiting_confirmation"
+  depth?: Depth
 }
