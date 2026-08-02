@@ -117,7 +117,7 @@ The agent runs a state machine with these steps:
 
 ## Design System
 
-Inspired by the Convio project's green-based theme:
+
 
 - **Primary**: Deep forest green (`hsl(142 71% 28%)` / `hsl(136 76% 45%)` dark)
 - **Background**: Warm off-white / deep teal-black in dark mode
@@ -133,8 +133,4 @@ Inspired by the Convio project's green-based theme:
 
 MIT — see [LICENSE](./LICENSE).
 
-## Acknowledgments
 
-- Built in collaboration with [opencode](https://opencode.ai) AI agent
-- Reference: [awesome-llm-apps](https://github.com/Shubhamsaboo/awesome-llm-apps) by Shubhamsaboo
-- Inspired by Convio design system
